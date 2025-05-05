@@ -1,4 +1,4 @@
-// SleepBot V1 - Versão ESP32 com painel web dinâmico com gráficos avançados, dark mode e mais sensores
+// SleepBot V1 - ESP32 com ECG (AD8232) integrado
 // Autor: Vinícius Chelli + ChatGPT
 
 #include <WiFi.h>
@@ -15,6 +15,7 @@
 #define MQ2_PIN 34
 #define PIR_PIN 14
 #define VIB_PIN 35
+#define HEART_PIN 32
 #define LED_VERDE 27
 #define LED_AMARELO 26
 #define LED_VERMELHO 25
@@ -35,9 +36,11 @@ String getSensorData() {
   int gas = analogRead(MQ2_PIN);
   int mov = digitalRead(PIR_PIN);
   int vib = analogRead(VIB_PIN);
-  char buf[300];
-  sprintf(buf, "{\"temp\":%.1f,\"umid\":%.1f,\"luz\":%d,\"som\":%d,\"gas\":%d,\"mov\":%d,\"vib\":%d}",
-          temp, umid, luz, som, gas, mov, vib);
+  int ecg = analogRead(HEART_PIN); // ECG AD8232
+
+  char buf[400];
+  sprintf(buf, "{\"temp\":%.1f,\"umid\":%.1f,\"luz\":%d,\"som\":%d,\"gas\":%d,\"mov\":%d,\"vib\":%d,\"ecg\":%d}",
+          temp, umid, luz, som, gas, mov, vib, ecg);
   return String(buf);
 }
 
@@ -88,7 +91,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 </head>
 <body>
   <h1>SleepBot</h1>
-  <p>Monitoramento ambiental em tempo real com gráficos</p>
+  <p>Monitoramento ambiental e cardíaco em tempo real</p>
 
   <div class="cards">
     <div class="card"><strong>Temperatura:</strong> <span id="temp">--</span> °C</div>
@@ -98,6 +101,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     <div class="card"><strong>Gás:</strong> <span id="gas">--</span></div>
     <div class="card"><strong>Movimento:</strong> <span id="mov">--</span></div>
     <div class="card"><strong>Vibração:</strong> <span id="vib">--</span></div>
+    <div class="card"><strong>ECG:</strong> <span id="ecg">--</span></div>
   </div>
 
   <canvas id="tempChart"></canvas>
@@ -106,6 +110,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   <canvas id="somChart"></canvas>
   <canvas id="gasChart"></canvas>
   <canvas id="vibChart"></canvas>
+  <canvas id="ecgChart"></canvas>
 
   <footer>Desenvolvido por Vinícius Chelli - SleepBot v1</footer>
 
@@ -143,6 +148,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     const somChart = createChart("somChart", "Som (ADC)", "#ab47bc", 0, 1024);
     const gasChart = createChart("gasChart", "Gás (ADC)", "#ef5350", 0, 1024);
     const vibChart = createChart("vibChart", "Vibração (ADC)", "#26a69a", 0, 1024);
+    const ecgChart = createChart("ecgChart", "ECG (AD8232)", "#cfd8dc", 0, 1024);
 
     setInterval(() => {
       fetch("/dados")
@@ -156,6 +162,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById("gas").innerText = data.gas;
           document.getElementById("mov").innerText = data.mov ? "Detectado" : "Ausente";
           document.getElementById("vib").innerText = data.vib;
+          document.getElementById("ecg").innerText = data.ecg;
 
           const charts = [
             [tempChart, data.temp],
@@ -163,7 +170,8 @@ const char index_html[] PROGMEM = R"rawliteral(
             [luzChart, data.luz],
             [somChart, data.som],
             [gasChart, data.gas],
-            [vibChart, data.vib]
+            [vibChart, data.vib],
+            [ecgChart, data.ecg]
           ];
 
           charts.forEach(([chart, value]) => {
@@ -198,7 +206,6 @@ void setup() {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("");
   Serial.println("WiFi conectado");
   Serial.println(WiFi.localIP());
 
@@ -214,5 +221,5 @@ void setup() {
 }
 
 void loop() {
-  // Servidor assíncrono - nada necessário aqui
+  // Nada necessário aqui
 }
