@@ -1,4 +1,4 @@
-// SleepBot V1 - com ESP32, Web UI e MAX30100
+// SleepBot V1 – ESP32 (38 pinos), Web UI, MAX30100, Chaves Alavanca
 // Autor: Vinícius Chelli + ChatGPT
 
 #include <WiFi.h>
@@ -10,6 +10,7 @@
 #include <Adafruit_Sensor.h>
 #include "MAX30100_PulseOximeter.h"
 
+// Sensores
 #define DHTPIN 15
 #define DHTTYPE DHT11
 #define LDRPIN 36
@@ -17,10 +18,27 @@
 #define MQ2_PIN 34
 #define PIR_PIN 14
 #define VIB_PIN 35
-#define LED_VERDE 27
-#define LED_AMARELO 26
-#define LED_VERMELHO 25
+
+// LEDs e Buzzer
+#define LED_VERDE 21
+#define LED_AMARELO 22
+#define LED_VERMELHO 23
 #define BUZZER_PIN 13
+
+// Botões (chaves alavanca)
+#define CHAVE_SENSOR_EXTRA 32
+#define CHAVE_SILENCIO     33
+#define CHAVE_WEBSERVER    25
+#define CHAVE_LOG          26
+#define CHAVE_ALARME       27
+
+// Comunicação I2C
+#define SDA_PIN 18
+#define SCL_PIN 19
+
+// Wi-Fi
+const char* ssid = "pix bladehelios@gmail.com";
+const char* password = "Pa250250700@@@@@@@";
 
 #define REPORTING_PERIOD_MS 1000
 
@@ -29,11 +47,8 @@ RTC_DS3231 rtc;
 PulseOximeter pox;
 AsyncWebServer server(80);
 
-const char* ssid = "pix bladehelios@gmail.com";
-const char* password = "Pa250250700@@@@@@@";
-
-uint32_t tsLastReport = 0;
 float bpm = 0, spo2 = 0;
+uint32_t tsLastReport = 0;
 
 String getSensorData() {
   float temp = dht.readTemperature();
@@ -65,7 +80,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       text-align: center;
       padding: 20px;
     }
-    h1 { color: #66bb6a; }
+    h1 {
+      color: #66bb6a;
+    }
     canvas {
       background: #1f1f1f;
       border-radius: 8px;
@@ -95,10 +112,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 </head>
 <body>
   <h1>SleepBot</h1>
-  <p>Monitoramento ambiental em tempo real com gráficos</p>
+  <p>Monitoramento ambiental e biométrico em tempo real</p>
 
   <div class="cards">
-    <div class="card"><strong>Temp:</strong> <span id="temp">--</span> °C</div>
+    <div class="card"><strong>Temperatura:</strong> <span id="temp">--</span> °C</div>
     <div class="card"><strong>Umidade:</strong> <span id="umid">--</span> %</div>
     <div class="card"><strong>Luz:</strong> <span id="luz">--</span></div>
     <div class="card"><strong>Som:</strong> <span id="som">--</span></div>
@@ -109,60 +126,94 @@ const char index_html[] PROGMEM = R"rawliteral(
     <div class="card"><strong>SpO₂:</strong> <span id="spo2">--</span> %</div>
   </div>
 
+  <canvas id="tempChart"></canvas>
+  <canvas id="umidChart"></canvas>
+  <canvas id="luzChart"></canvas>
+  <canvas id="somChart"></canvas>
+  <canvas id="gasChart"></canvas>
+  <canvas id="vibChart"></canvas>
   <canvas id="bpmChart"></canvas>
+  <canvas id="spo2Chart"></canvas>
 
   <footer>Desenvolvido por Vinícius Chelli - SleepBot v1</footer>
 
   <script>
-    const bpmChart = new Chart(document.getElementById("bpmChart").getContext("2d"), {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [{
-          label: "Batimentos (BPM)",
-          data: [],
-          borderColor: "#f44336",
-          backgroundColor: "#f4433633",
-          fill: true,
-          tension: 0.3
-        }]
-      },
-      options: {
-        scales: {
-          x: { display: false },
-          y: { beginAtZero: true, suggestedMin: 40, suggestedMax: 140 }
+    const createChart = (ctxId, label, color, min, max) => {
+      return new Chart(document.getElementById(ctxId).getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            label: label,
+            data: [],
+            borderColor: color,
+            backgroundColor: color + '33',
+            fill: true,
+            tension: 0.3
+          }]
+        },
+        options: {
+          scales: {
+            x: { display: false },
+            y: {
+              beginAtZero: true,
+              suggestedMin: min,
+              suggestedMax: max
+            }
+          }
         }
-      }
-    });
+      });
+    };
+
+    const charts = {
+      temp: createChart("tempChart", "Temperatura (°C)", "#66bb6a", 10, 40),
+      umid: createChart("umidChart", "Umidade (%)", "#29b6f6", 0, 100),
+      luz: createChart("luzChart", "Luz (ADC)", "#ffa726", 0, 1024),
+      som: createChart("somChart", "Som (ADC)", "#ab47bc", 0, 1024),
+      gas: createChart("gasChart", "Gás (ADC)", "#ef5350", 0, 1024),
+      vib: createChart("vibChart", "Vibração (ADC)", "#26a69a", 0, 1024),
+      bpm: createChart("bpmChart", "BPM", "#8e24aa", 40, 140),
+      spo2: createChart("spo2Chart", "SpO₂ (%)", "#42a5f5", 85, 100)
+    };
+
+    function updateCard(id, value, unit = "") {
+      document.getElementById(id).innerText = value + unit;
+    }
 
     setInterval(() => {
       fetch("/dados")
         .then(res => res.json())
         .then(data => {
           const time = new Date().toLocaleTimeString();
-          document.getElementById("temp").innerText = data.temp;
-          document.getElementById("umid").innerText = data.umid;
-          document.getElementById("luz").innerText = data.luz;
-          document.getElementById("som").innerText = data.som;
-          document.getElementById("gas").innerText = data.gas;
-          document.getElementById("mov").innerText = data.mov ? "Detectado" : "Ausente";
-          document.getElementById("vib").innerText = data.vib;
-          document.getElementById("bpm").innerText = data.bpm.toFixed(1);
-          document.getElementById("spo2").innerText = data.spo2.toFixed(1);
 
-          if (bpmChart.data.labels.length > 20) {
-            bpmChart.data.labels.shift();
-            bpmChart.data.datasets[0].data.shift();
+          updateCard("temp", data.temp, " °C");
+          updateCard("umid", data.umid, " %");
+          updateCard("luz", data.luz);
+          updateCard("som", data.som);
+          updateCard("gas", data.gas);
+          updateCard("mov", data.mov ? "Detectado" : "Ausente");
+          updateCard("vib", data.vib);
+          updateCard("bpm", data.bpm);
+          updateCard("spo2", data.spo2, " %");
+
+          for (let key in charts) {
+            const chart = charts[key];
+            const value = data[key];
+            if (chart.data.labels.length > 20) {
+              chart.data.labels.shift();
+              chart.data.datasets[0].data.shift();
+            }
+            chart.data.labels.push(time);
+            chart.data.datasets[0].data.push(value);
+            chart.update();
           }
-          bpmChart.data.labels.push(time);
-          bpmChart.data.datasets[0].data.push(data.bpm);
-          bpmChart.update();
         });
     }, 2000);
   </script>
 </body>
 </html>
 )rawliteral";
+
 
 void onPulseDetected() {
   Serial.println("Pulso detectado!");
@@ -172,7 +223,7 @@ void setup() {
   Serial.begin(115200);
   dht.begin();
   rtc.begin();
-  Wire.begin();
+  Wire.begin(SDA_PIN, SCL_PIN);
 
   pinMode(PIR_PIN, INPUT);
   pinMode(LED_VERDE, OUTPUT);
@@ -180,8 +231,14 @@ void setup() {
   pinMode(LED_VERMELHO, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
 
+  pinMode(CHAVE_SENSOR_EXTRA, INPUT_PULLUP);
+  pinMode(CHAVE_SILENCIO, INPUT_PULLUP);
+  pinMode(CHAVE_WEBSERVER, INPUT_PULLUP);
+  pinMode(CHAVE_LOG, INPUT_PULLUP);
+  pinMode(CHAVE_ALARME, INPUT_PULLUP);
+
   if (!pox.begin()) {
-    Serial.println("Erro ao iniciar o MAX30100");
+    Serial.println("Erro ao iniciar MAX30100");
   } else {
     pox.setIRLedCurrent(MAX30100_LED_CURR_7_6mA);
     pox.setOnBeatDetectedCallback(onPulseDetected);
@@ -195,15 +252,15 @@ void setup() {
   Serial.println("\nWiFi conectado");
   Serial.println(WiFi.localIP());
 
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/html", index_html);
-  });
-
-  server.on("/dados", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "application/json", getSensorData());
-  });
-
-  server.begin();
+  if (digitalRead(CHAVE_WEBSERVER) == LOW) {
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send_P(200, "text/html", index_html);
+    });
+    server.on("/dados", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send(200, "application/json", getSensorData());
+    });
+    server.begin();
+  }
 }
 
 void loop() {
@@ -212,5 +269,12 @@ void loop() {
     bpm = pox.getHeartRate();
     spo2 = pox.getSpO2();
     tsLastReport = millis();
+  }
+
+  if (digitalRead(CHAVE_SILENCIO) == LOW) {
+    digitalWrite(BUZZER_PIN, LOW);
+    digitalWrite(LED_VERDE, LOW);
+    digitalWrite(LED_AMARELO, LOW);
+    digitalWrite(LED_VERMELHO, LOW);
   }
 }
